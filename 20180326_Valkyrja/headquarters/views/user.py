@@ -1,0 +1,156 @@
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import IntegrityError
+from django.http import HttpResponse
+
+from headquarters import bugle
+from headquarters.error_code import ErrorCode
+from headquarters.models import User, LoggingInUser
+from headquarters.user_state import UserState
+
+import json
+
+
+def login(request):
+    response_data = {"errorCode": ErrorCode.OK}
+
+    try:
+        req_body = json.loads(request.body.decode("utf-8"))
+
+        username = req_body["userName"]
+        password = req_body["password"]
+        ip = req_body["ip"]
+
+        user = User.objects.get(username=username, password=password)
+    except KeyError:
+        response_data["errorCode"] = ErrorCode.TooFewArgument
+    except ObjectDoesNotExist:
+        response_data["errorCode"] = ErrorCode.InvalidUserNameOrPassword
+    else:
+        response_data["content"] = {
+            "userId": user.id,
+            "role": user.role
+        }
+
+        LoggingInUser.objects.filter(user=user).delete()
+        LoggingInUser.objects.create(ip_address=ip,
+                                     state=UserState.Login,
+                                     user=user)
+
+        if user.role == "student":
+            bugle.student_login(user)
+        print(response_data)
+
+    return HttpResponse(json.dumps(response_data))
+
+
+def logout(request, u_id):
+    response_data = {"errorCode": ErrorCode.OK}
+
+    try:
+        user = User.objects.get(id=u_id)
+
+        records = LoggingInUser.objects.filter(user=user)
+    except KeyError:
+        response_data["errorCode"] = ErrorCode.TooFewArgument
+    except ObjectDoesNotExist:
+        response_data["errorCode"] = ErrorCode.UserNotLoggedIn
+    else:
+        records.delete()
+
+        if user.role == "student":
+            bugle.student_logout(user)
+
+    return HttpResponse(json.dumps(response_data))
+
+
+def register(request):
+    response_data = {"errorCode": ErrorCode.OK}
+
+    try:
+        req_body = json.loads(request.body.decode("utf-8"))
+
+        username = req_body["userName"]
+        password = req_body["password"]
+        name = req_body["name"]
+        student_id = req_body["studentId"]
+        email = req_body["email"]
+        graduate_year = req_body["graduateYear"]
+        profile_photo = req_body["profilePhoto"].encode("utf-8")
+
+        User.objects.create(
+            username=username,
+            password=password,
+            name=name,
+            student_id=student_id,
+            is_admin=False,
+            graduate_year=graduate_year,
+            email=email,
+            profile_photo=bytes(profile_photo)
+        )
+    except KeyError:
+        response_data["errorCode"] = ErrorCode.TooFewArgument
+    except IntegrityError:
+        response_data["errorCode"] = ErrorCode.DuplicatedRegistration
+
+    return HttpResponse(json.dumps(response_data))
+
+
+def forget_password(request):
+    response_data = {"errorCode": ErrorCode.OK}
+
+    return HttpResponse(json.dumps(response_data))
+
+
+def reset_password(request, u_id):
+    response_data = {"errorCode": ErrorCode.OK}
+
+    try:
+        req_body = json.loads(request.body.decode("utf-8"))
+
+        user = User.objects.get(id=u_id, password=req_body["oldPassword"])
+
+        new_password = req_body["newPassword"]
+    except KeyError:
+        response_data["errorCode"] = ErrorCode.TooFewArgument
+    except ObjectDoesNotExist:
+        response_data["errorCode"] = ErrorCode.UserNotFound
+    else:
+        user.password = new_password
+        user.save()
+
+    return HttpResponse(json.dumps(response_data))
+
+
+def user_profile(request, u_id):
+    response_data = {"errorCode": ErrorCode.OK}
+
+    try:
+        user = User.objects.get(id=u_id)
+    except ObjectDoesNotExist:
+        response_data["errorCode"] = ErrorCode.UserNotFound
+    else:
+        response_data["content"] = {
+	    "id": user.id,
+            "studentId": user.student_id,
+            "name": user.name,
+            "userName": user.username,
+            "email": user.email,
+            "graduateYear": user.graduate_year
+        }
+
+    return HttpResponse(json.dumps(response_data))
+
+
+def user_profile_photo(request, u_id):
+    response_data = {"errorCode": ErrorCode.OK}
+
+    try:
+        user = User.objects.get(id=u_id)
+    except ObjectDoesNotExist:
+        response_data["errorCode"] = ErrorCode.UserNotFound
+    else:
+        response_data["content"] = {
+            "profilePhoto": user.profile_photo.decode("utf-8")
+        }
+
+    return HttpResponse(json.dumps(response_data))
